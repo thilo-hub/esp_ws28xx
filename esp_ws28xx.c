@@ -28,6 +28,8 @@ static spi_settings_t spi_settings = {
 };
 
 static const uint16_t timing_bits[16] = {
+    // 0 -> 0001   
+    // 1 -> 0111
     0x1111, 0x7111, 0x1711, 0x7711, 0x1171, 0x7171, 0x1771, 0x7771,
     0x1117, 0x7117, 0x1717, 0x7717, 0x1177, 0x7177, 0x1777, 0x7777};
 
@@ -39,8 +41,10 @@ esp_err_t ws28xx_init(int pin, led_strip_model_t model, int num_of_leds,
     // Insrease if something breaks. values are less than recommended in
     // datasheets but seem stable
     reset_delay = (model == WS2812B) ? 3 : 30;
+
     // 12 bytes for each led + bytes for initial zero and reset state
     dma_buf_size = n_of_leds * 12 + (reset_delay + 1) * 2;
+
     ws28xx_pixels = malloc(sizeof(CRGB) * n_of_leds);
     if (ws28xx_pixels == NULL) {
         return ESP_ERR_NO_MEM;
@@ -50,23 +54,20 @@ esp_err_t ws28xx_init(int pin, led_strip_model_t model, int num_of_leds,
     spi_settings.buscfg.max_transfer_sz = dma_buf_size;
     err = spi_bus_initialize(spi_settings.host, &spi_settings.buscfg,
                              spi_settings.dma_chan);
-    if (err != ESP_OK) {
-        free(ws28xx_pixels);
-        return err;
-    }
-    err = spi_bus_add_device(spi_settings.host, &spi_settings.devcfg,
-                             &spi_settings.spi);
-    if (err != ESP_OK) {
-        free(ws28xx_pixels);
-        return err;
-    }
+
+    if (err == ESP_OK) 
+	err = spi_bus_add_device(spi_settings.host, &spi_settings.devcfg,
+				 &spi_settings.spi);
+    
     // Critical to be DMA memory.
-    dma_buffer = heap_caps_malloc(dma_buf_size, MALLOC_CAP_DMA);
-    if (dma_buffer == NULL) {
+    if (err == ESP_OK && 
+	(dma_buffer = heap_caps_malloc(dma_buf_size, MALLOC_CAP_DMA)) == NULL )
+	err = ESP_ERR_NO_MEM;
+
+    if (err != ESP_OK) {
         free(ws28xx_pixels);
-        return ESP_ERR_NO_MEM;
     }
-    return ESP_OK;
+    return err;
 }
 
 void ws28xx_fill_all(CRGB color) {
@@ -77,35 +78,35 @@ void ws28xx_fill_all(CRGB color) {
 
 esp_err_t ws28xx_update() {
     esp_err_t err;
-    int n = 0;
-    memset(dma_buffer, 0, dma_buf_size);
-    dma_buffer[n++] = 0;
+    uint16_t *pixptr = dma_buffer;
+
+    *pixptr++ = 0;
     for (int i = 0; i < n_of_leds; i++) {
         // Data you want to write to each LEDs
         uint32_t temp = ws28xx_pixels[i].num;
         if (led_model == WS2815) {
             // Red
-            dma_buffer[n++] = timing_bits[0x0f & (temp >> 4)];
-            dma_buffer[n++] = timing_bits[0x0f & (temp)];
+            *pixptr++ = timing_bits[0x0f & (temp >> 4)];
+            *pixptr++ = timing_bits[0x0f & (temp)];
 
             // Green
-            dma_buffer[n++] = timing_bits[0x0f & (temp >> 12)];
-            dma_buffer[n++] = timing_bits[0x0f & (temp) >> 8];
+            *pixptr++ = timing_bits[0x0f & (temp >> 12)];
+            *pixptr++ = timing_bits[0x0f & (temp) >> 8];
         } else {
             // Green
-            dma_buffer[n++] = timing_bits[0x0f & (temp >> 12)];
-            dma_buffer[n++] = timing_bits[0x0f & (temp) >> 8];
+            *pixptr++ = timing_bits[0x0f & (temp >> 12)];
+            *pixptr++ = timing_bits[0x0f & (temp) >> 8];
 
             // Red
-            dma_buffer[n++] = timing_bits[0x0f & (temp >> 4)];
-            dma_buffer[n++] = timing_bits[0x0f & (temp)];
+            *pixptr++ = timing_bits[0x0f & (temp >> 4)];
+            *pixptr++ = timing_bits[0x0f & (temp)];
         }
         // Blue
-        dma_buffer[n++] = timing_bits[0x0f & (temp >> 20)];
-        dma_buffer[n++] = timing_bits[0x0f & (temp) >> 16];
+        *pixptr++ = timing_bits[0x0f & (temp >> 20)];
+        *pixptr++ = timing_bits[0x0f & (temp) >> 16];
     }
     for (int i = 0; i < reset_delay; i++) {
-        dma_buffer[n++] = 0;
+        *pixptr++ = 0;
     }
 
     err = spi_device_transmit(spi_settings.spi, &(spi_transaction_t){
