@@ -5,6 +5,7 @@ CRGB *ws28xx_pixels;
 static int n_of_leds, reset_delay, dma_buf_size;
 static led_strip_model_t led_model;
 
+static SemaphoreHandle_t xSemaphore;
 static spi_settings_t spi_settings = {
     .host = SPI2_HOST,
     .dma_chan = SPI_DMA_CH_AUTO,
@@ -59,6 +60,9 @@ esp_err_t ws28xx_init(int pin, led_strip_model_t model, int num_of_leds,
 	err = spi_bus_add_device(spi_settings.host, &spi_settings.devcfg,
 				 &spi_settings.spi);
     
+    if (err == ESP_OK && (xSemaphore = xSemaphoreCreateMutex()) == NULL )
+	err = ESP_ERR_NO_MEM; // error number ??
+
     // Critical to be DMA memory.
     if (err == ESP_OK && 
 	(dma_buffer = heap_caps_malloc(dma_buf_size, MALLOC_CAP_DMA)) == NULL )
@@ -79,6 +83,7 @@ void ws28xx_fill_all(CRGB color) {
 esp_err_t ws28xx_update() {
     esp_err_t err;
     uint16_t *pixptr = dma_buffer;
+    xSemaphoreTake(xSemaphore, portMAX_DELAY);
 
     *pixptr++ = 0;
     for (int i = 0; i < n_of_leds; i++) {
@@ -113,5 +118,6 @@ esp_err_t ws28xx_update() {
                                                     .length = dma_buf_size * 8,
                                                     .tx_buffer = dma_buffer,
                                                 });
+    xSemaphoreGive(xSemaphore);
     return err;
 }
