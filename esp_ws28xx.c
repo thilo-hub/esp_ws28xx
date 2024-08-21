@@ -1,9 +1,9 @@
 #include "esp_ws28xx.h"
 
-uint16_t *dma_buffer;
+static uint16_t *dma_buffer;
 CRGB *ws28xx_pixels;
 static int n_of_leds, reset_delay, dma_buf_size;
-led_strip_model_t led_model;
+static led_strip_model_t led_model;
 
 static spi_settings_t spi_settings = {
     .host = SPI2_HOST,
